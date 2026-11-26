@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>Little Boar &amp; Puki</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#0b0a14;color:#fff;overflow:hidden;
+    font-family:'Press Start 2P',ui-monospace,Menlo,Consolas,monospace}
+  #stage{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center}
+  #game{position:relative;overflow:hidden;--u:3px}
+  canvas{display:block;width:100%;height:100%;image-rendering:pixelated;image-rendering:crisp-edges;background:#000}
+  .hidden{display:none !important}
+  #hud{position:absolute;left:calc(var(--u)*3);top:calc(var(--u)*3);right:calc(var(--u)*3);
+    font-size:calc(var(--u)*2.6);line-height:1.7;text-shadow:calc(var(--u)*.4) calc(var(--u)*.4) 0 #000;pointer-events:none}
+  #hud .obj{margin-top:calc(var(--u)*1);color:#ffe9a0;font-size:calc(var(--u)*2.2)}
+  #toast{position:absolute;top:calc(var(--u)*24);left:50%;transform:translateX(-50%);background:#14102aee;border:calc(var(--u)*.7) solid #f4e7b0;
+    padding:calc(var(--u)*2) calc(var(--u)*3);font-size:calc(var(--u)*2.6);opacity:0;transition:opacity .25s;pointer-events:none;white-space:nowrap}
+  #toast.on{opacity:1}
+  #dlg{position:absolute;left:calc(var(--u)*6);right:calc(var(--u)*6);bottom:calc(var(--u)*5);background:#14102af2;
+    border:calc(var(--u)*1) solid #f4e7b0;padding:calc(var(--u)*4) calc(var(--u)*5);font-size:calc(var(--u)*3);line-height:1.7;min-height:calc(var(--u)*22)}
+  #dname{position:absolute;top:calc(var(--u)*-5.5);left:calc(var(--u)*4);background:#f4e7b0;color:#14102a;padding:calc(var(--u)*1) calc(var(--u)*3);font-size:calc(var(--u)*2.6)}
+  #dnext{position:absolute;right:calc(var(--u)*4);bottom:calc(var(--u)*2);animation:blink .8s infinite}
+  @keyframes blink{50%{opacity:0}}
+  #dchoices div{padding:calc(var(--u)*.6) 0;cursor:pointer}
+  #dchoices div.sel{color:#ffe66b}
+  #dchoices div.sel::before{content:'▶ '}
+  #dchoices div:not(.sel)::before{content:'\00a0\00a0 '}
+  #dinput{width:100%;box-sizing:border-box;margin-top:calc(var(--u)*2);background:#000;color:#fff;border:calc(var(--u)*.6) solid #f4e7b0;
+    font:inherit;padding:calc(var(--u)*1.5)}
+  #journal{position:absolute;inset:calc(var(--u)*8);background:#14102af7;border:calc(var(--u)*1) solid #f4e7b0;padding:calc(var(--u)*4);
+    font-size:calc(var(--u)*2.4);line-height:1.9;overflow:auto}
+  #journal h2{margin:0 0 calc(var(--u)*2);font-size:calc(var(--u)*3.4);color:#ffe66b}
+  #title{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+    background:radial-gradient(ellipse at center,#0b0a1455,#0b0a14cc)}
+  #title h1{font-size:calc(var(--u)*7);line-height:1.4;margin:0 0 calc(var(--u)*8);color:#ffe66b;text-shadow:calc(var(--u)*.8) calc(var(--u)*.8) 0 #7a3a1a}
+  #title button{display:block;margin:calc(var(--u)*2) auto;background:#f4e7b0;color:#14102a;border:0;font:inherit;font-size:calc(var(--u)*3.4);
+    padding:calc(var(--u)*2.5) calc(var(--u)*6);cursor:pointer}
+  #title button:hover,#title button:focus{background:#ffe66b;outline:none}
+  #title p{font-size:calc(var(--u)*2);line-height:2;color:#cfc8e8;margin-top:calc(var(--u)*7)}
+  #fade{position:absolute;inset:0;background:#000;opacity:0;transition:opacity .6s;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="stage"><div id="game">
+  <canvas id="c"></canvas>
+  <div id="hud"></div>
+  <div id="toast"></div>
+  <div id="dlg" class="hidden">
+    <div id="dname"></div><div id="dtext"></div><div id="dchoices"></div>
+    <input id="dinput" class="hidden" maxlength="80" autocomplete="off" spellcheck="false">
+    <div id="dnext" class="hidden">▼</div>
+  </div>
+  <div id="journal" class="hidden"></div>
+  <div id="title">
+    <h1>Little Boar<br>&amp; Puki</h1>
+    <div id="tbtns"></div>
+    <p>Arrows / WASD: move &nbsp; E: talk &amp; use<br>F: sniff &nbsp; Tab: journal &nbsp; M: sound</p>
+  </div>
+  <div id="fade"></div>
+</div></div>
+
+<script>
+'use strict';
+/* =====================================================================
+   LITTLE BOAR & PUKI  -  a tiny pixel-art adventure with an AI Dungeon Master
+   ---------------------------------------------------------------------
+   AI SETUP (optional):  put the address of your proxy below (see worker.js).
+   Leave it empty and the game still works with hand-written replies.
+   ===================================================================== */
+const AI_CONFIG = { url: '', timeoutMs: 9000, maxCallsPerSession: 80 };
+
+/* ---------- basics ---------- */
+const W = 320, H = 192, T = 16, MW = 56, MH = 40;
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+cv.width = W; cv.height = H; ctx.imageSmoothingEnabled = false;
+const lcv = document.createElement('canvas'); lcv.width = W; lcv.height = H;
+const lctx = lcv.getContext('2d');
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const pick = a => a[Math.floor(Math.random() * a.length)];
+
+function resize() {
+  const s = Math.max(1, Math.floor(Math.min(innerWidth / W, innerHeight / H)));
+  const g = $('game'); g.style.width = W * s + 'px'; g.style.height = H * s + 'px'; g.style.setProperty('--u', s + 'px');
+}
+addEventListener('resize', resize); resize();
+
+/* ---------- sound (tiny synth, no files) ---------- */
+let AC = null, muted = false;
+function audio() {
+  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (AC && AC.state === 'suspended') AC.resume();
+}
+function tone(f, d = 0.08, type = 'square', v = 0.04, slide = 0) {
+  if (muted || !AC) return;
+  const o = AC.createOscillator(), g = AC.createGain(), t = AC.currentTime;
+  o.type = type; o.frequency.setValueAtTime(f, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(40, f + slide), t + d);
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t + d);
+}
+const sfx = {
+  flash: () => tone(500, .3, 'sine', .06, 800),
+  squeal: () => tone(1500, .4, 'sawtooth', .04, -1000),
+  pick: () => { tone(700, .06); setTimeout(() => tone(1050, .09), 70); },
+  dig: () => tone(140, .12, 'square', .05, -70),
+  ding: () => { tone(880, .15, 'sine', .06); setTimeout(() => tone(1320, .25, 'sine', .06), 120); },
+  yay: () => [660, 880, 1100].forEach((f, i) => setTimeout(() => tone(f, .12, 'square', .04), i * 90)),
+  tink: () => tone(1800 + Math.random() * 600, .05, 'triangle', .04)
+};
+
+/* ---------- save data ---------- */
+const SAVE_KEY = 'littleboar_save_v1';
+const newState = () => ({
+  introDone: false, day: 1,
+  items: { berries: 0, bugs: 0, worms: 0, truffles: 0, apples: 0, gears: 0 },
+  sniff: 1, sniffXp: 0, wisdom: 0,
+  q: { bramble: 0, olwin: 0, rusty: 0 },
+  chats: { bramble: 0, olwin: 0, rusty: 0 },
+  found: {}, apples: {}, berries: {}, bridge: false, gearsNoted: false, px: 0, py: 0
+});
+let S = newState();
+function save() {
+  if (!S.introDone) return;
+  S.px = boar.x; S.py = boar.y;
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) {}
+}
+function loadSave() {
+  try {
+    const d = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+    if (d && d.introDone) { const n = newState(); return Object.assign(n, d, { items: Object.assign(n.items, d.items) }); }
+  } catch (e) {}
+  return null;
+}
+
+/* ---------- world generation (same forest every time) ---------- */
+function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function hash(a, b, c) { let h = (a * 374761393 + b * 668265263 + c * 2147483647) | 0;
+  h = (h ^ (h >>> 13)) * 1274126177 | 0; return (h ^ (h >>> 16)) >>> 0; }
+const RNG = mulberry(20261125);
+const ground = [], solid = [], reserved = [];
+for (let y = 0; y < MH; y++) { ground.push(new Uint8Array(MW)); solid.push(new Uint8Array(MW)); reserved.push(new Uint8Array(MW)); }
+const inMap = (x, y) => x >= 0 && y >= 0 && x < MW && y < MH;
+function reserve(cx, cy, r) { for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r; x <= cx + r; x++) if (inMap(x, y)) reserved[y][x] = 1; }
+
+const FEAT = {
+  hut: { tx: 5, ty: 4 }, dig: { tx: 18, ty: 10 },
+  bramble: [31, 10], olwin: [38, 22], rusty: [22, 30],
+  apples: [[27, 14], [34, 15], [29, 7], [36, 8]],
+  berries: [[12, 5], [11, 13], [20, 7], [25, 17], [33, 21], [40, 13], [18, 24], [8, 12], [30, 26]],
+  truffles: [[9, 16], [24, 6], [35, 27], [19, 28], [41, 31]],
+  rock: [13, 30], stash: [14, 32], sign: [50, 19], bridgeRows: [19, 20], river: [46, 47]
+};
+const doorX = 6 * T + 8, doorY = 7 * T + 6;
+const digX = FEAT.dig.tx * T + 8, digY = FEAT.dig.ty * T + 8;
+
+// path
+(function () {
+  const pts = [[6, 8], [6, 10], [15, 10], [15, 12], [30, 12], [30, 19], [45, 19]];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
+    for (let x = Math.min(x0, x1); x <= Math.max(x0, x1) + (y0 === y1 ? 0 : 1); x++)
+      for (let y = Math.min(y0, y1); y <= Math.max(y0, y1) + (x0 === x1 ? 0 : 1); y++) if (inMap(x, y)) { ground[y][x] = 1; reserved[y][x] = 1; }
+  }
+})();
+ground[FEAT.dig.ty][FEAT.dig.tx] = 2; ground[FEAT.dig.ty][FEAT.dig.tx + 1] = 2;
+// river + broken bridge
+for (let y = 0; y < MH; y++) for (let x = FEAT.river[0]; x <= FEAT.river[1]; x++) { ground[y][x] = 3; solid[y][x] = 1; reserved[y][x] = 1; }
+function applyBridge() {
+  for (let y = FEAT.bridgeRows[0]; y <= FEAT.bridgeRows[1]; y++) for (let x = FEAT.river[0]; x <= FEAT.river[1]; x++) {
+    if (S.bridge) { ground[y][x] = 4; solid[y][x] = 0; } else { ground[y][x] = 3; solid[y][x] = 1; }
+  }
+}
+// pond
+for (let y = 20; y <= 23; y++) for (let x = 22; x <= 26; x++) {
+  const dx = (x - 24) / 2.7, dy = (y - 21.5) / 2.1;
+  if (dx * dx + dy * dy <= 1) { ground[y][x] = 3; solid[y][x] = 1; reserved[y][x] = 1; }
+}
+// hut + features
+for (let y = 4; y <= 6; y++) for (let x = 5; x <= 7; x++) solid[y][x] = 1;
+for (let y = 3; y <= 8; y++) for (let x = 4; x <= 8; x++) reserved[y][x] = 1;
+[FEAT.bramble, FEAT.olwin, FEAT.rusty].forEach(([x, y]) => reserve(x, y, 2));
+FEAT.apples.forEach(([x, y]) => { reserve(x, y, 1); solid[y][x] = 1; });
+FEAT.berries.forEach(([x, y]) => { reserve(x, y, 1); solid[y][x] = 1; });
+FEAT.truffles.forEach(([x, y]) => reserve(x, y, 1));
+reserve(FEAT.rock[0], FEAT.rock[1], 1); solid[FEAT.rock[1]][FEAT.rock[0]] = 1;
+reserve(FEAT.stash[0], FEAT.stash[1], 1);
+reserve(FEAT.sign[0], FEAT.sign[1], 2); solid[FEAT.sign[1]][FEAT.sign[0]] = 1;
+reserve(FEAT.dig.tx, FEAT.dig.ty, 2);
+// trees
+const trees = [];
+for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+  if (solid[y][x] || reserved[y][x] || ground[y][x] === 3) continue;
+  const edge = x === 0 || y === 0 || x === MW - 1 || y === MH - 1;
+  const nearEdge = x <= 2 || y <= 2 || x >= MW - 3 || y >= MH - 3;
+  const meadow = x >= 9 && x <= 25 && y >= 6 && y <= 14;           // clearing around the digging spot
+  let p = meadow ? 0 : nearEdge ? 0.65 : 0.14;
+  if (x > FEAT.river[1] && x < MW - 3 && !(y >= 17 && y <= 22)) p = Math.max(p, 0.4);
+  if (edge || RNG() < p) { solid[y][x] = 1; trees.push({ tx: x, ty: y, v: hash(x, y, 9) % 3 }); }
+}
+// objects
+const objs = [];
+FEAT.apples.forEach(([x, y], i) => objs.push({ type: 'apple', id: 'a' + i, x: x * T + 8, y: y * T + 14 }));
+FEAT.berries.forEach(([x, y], i) => objs.push({ type: 'berry', id: 'b' + i, x: x * T + 8, y: y * T + 14 }));
+objs.push({ type: 'rock', id: 'rock', x: FEAT.rock[0] * T + 8, y: FEAT.rock[1] * T + 14 });
+objs.push({ type: 'sign', id: 'sign', x: FEAT.sign[0] * T + 8, y: FEAT.sign[1] * T + 14 });
+const bridgeSpot = { x: 45 * T + 10, y: 19 * T + 14 };
+const buried = FEAT.truffles.map(([x, y], i) => ({ id: 't' + i, kind: 'truffle', x: x * T + 8, y: y * T + 9 }));
+buried.push({ id: 'stash', kind: 'stash', x: FEAT.stash[0] * T + 8, y: FEAT.stash[1] * T + 9 });
+const stashItem = buried[buried.length - 1];
+
+/* ---------- characters ---------- */
+const boar = { x: 0, y: 0, dir: 'down', moving: false, t: 0, shake: 0, hop: 0, hopMax: .45, scared: false, stumble: 0, emote: null, target: null, digging: false, visible: true };
+const puki = { x: 0, y: 0, dir: 'down', moving: false, t: 0, shake: 0, hop: 0, hopMax: .45, emote: null, target: null, follow: false, visible: true, bulb: false, blush: false, stuck: 0 };
+const npcs = [
+  { id: 'bramble', name: 'Bramble', kind: 'hedgehog', x: FEAT.bramble[0] * T + 8, y: FEAT.bramble[1] * T + 12, f: -1, pitch: 260, seed: 1 },
+  { id: 'olwin', name: 'Olwin', kind: 'owl', x: FEAT.olwin[0] * T + 8, y: FEAT.olwin[1] * T + 12, f: -1, pitch: 170, seed: 2 },
+  { id: 'rusty', name: 'Rusty', kind: 'fox', x: FEAT.rusty[0] * T + 8, y: FEAT.rusty[1] * T + 12, f: 1, pitch: 390, seed: 3 }
+];
+const npcById = id => npcs.find(n => n.id === id);
+
+/* ---------- runtime state ---------- */
+let mode = 'title';          // title | play | cutscene | dialog
+let time = 0, dark = 0.55, darkT = 0.55, dusk = 1;
+const cam = { x: 0, y: 0 };
+const keys = {};
+const timers = [], lights = [], particles = [], effects = [];
+let journalOpen = false, hudTimer = 0, saveTimer = 0, toastTimer = 0;
+let sniffHint = null, target = null, busy = false;
+
+const wait = ms => new Promise(r => timers.push({ t: ms / 1000, r }));
+function setDir(e, dx, dy) { e.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'); }
+function walkTo(e, x, y, speed = 50) { return new Promise(res => { e.target = { x, y, speed, res }; }); }
+function emote(e, txt, ms = 1200) { e.emote = { txt, t: ms / 1000 }; }
+function hop(e, d = .45) { e.hop = d; e.hopMax = d; }
+function faceTo(e, o) { setDir(e, o.x - e.x, o.y - e.y); }
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function addLight(x, y, r, dur) { lights.push({ x, y, r, t: 0, dur }); }
+function flash(x, y) { sfx.flash(); addLight(x, y, 46, 1.4); }
+function burst(x, y, n, colors, spd = 30, life = .6) {
+  for (let i = 0; i < n; i++) particles.push({ x, y, vx: (Math.random() - .5) * spd, vy: -Math.random() * spd, life: life * (.5 + Math.random()), c: pick(colors), s: Math.random() < .3 ? 2 : 1 });
+}
+function toast(msg, ms = 2200) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), ms);
+}
+async function fadeOut() { $('fade').style.opacity = 1; await sleep(650); }
+async function fadeIn() { $('fade').style.opacity = 0; await sleep(650); }
+
+/* ---------- dialogue ---------- */
+let dlgRes = null, typing = false, typeFull = '', typeT = 0, lastBlip = 0, curPitch = 300;
+let chRes = null, chSel = 0, chCount = 0, inputRes = null;
+function say(name, text, pitch) {
+  return new Promise(res => {
+    $('dlg').classList.remove('hidden'); $('dname').textContent = name; $('dname').style.display = name ? '' : 'none';
+    $('dchoices').innerHTML = ''; $('dinput').classList.add('hidden'); $('dnext').classList.add('hidden');
+    curPitch = pitch || (name === 'Puki' ? 520 : name === 'Little Boar' ? 300 : 200);
+    typeFull = text; typeT = 0; lastBlip = 0; typing = true; $('dtext').textContent = ''; dlgRes = res;
+  });
+}
+function advanceDialog() {
+  if (typing) { typing = false; $('dtext').textContent = typeFull; $('dnext').classList.remove('hidden'); return; }
+  const r = dlgRes; dlgRes = null; $('dlg').classList.add('hidden'); if (r) r();
+}
+function choose(opts, prompt) {
+  return new Promise(res => {
+    typing = false; dlgRes = null;
+    $('dlg').classList.remove('hidden'); $('dname').style.display = 'none';
+    $('dtext').textContent = prompt || ''; $('dnext').classList.add('hidden'); $('dinput').classList.add('hidden');
+    chSel = 0; chCount = opts.length; chRes = res;
+    const box = $('dchoices'); box.innerHTML = '';
+    opts.forEach((o, i) => { const d = document.createElement('div'); d.textContent = o; if (i === 0) d.className = 'sel';
+      d.onclick = () => { chSel = i; confirmChoice(); }; d.onmouseenter = () => { chSel = i; renderSel(); }; box.appendChild(d); });
+  });
+}
+function renderSel() { [...$('dchoices').children].forEach((d, i) => d.className = i === chSel ? 'sel' : ''); }
+function confirmChoice() { const r = chRes; chRes = null; const i = chSel; $('dchoices').innerHTML = ''; $('dlg').classList.add('hidden'); if (r) r(i); }
+function askText(prompt) {
+  return new Promise(res => {
+    typing = false; dlgRes = null;
+    $('dlg').classList.remove('hidden'); $('dname').style.display = 'none'; $('dchoices').innerHTML = '';
+    $('dtext').textContent = prompt; $('dnext').classList.add('hidden');
+    const inp = $('dinput'); inp.value = ''; inp.classList.remove('hidden'); inputRes = res; setTimeout(() => inp.focus(), 30);
+  });
+}
+$('dinput').addEventListener('keydown', e => {
+  e.stopPropagation();
+  if (e.key === 'Enter' || e.key === 'Escape') {
+    const v = e.key === 'Enter' ? $('dinput').value.trim() : null; const r = inputRes; inputRes = null;
+    $('dinput').classList.add('hidden'); $('dinput').blur(); $('dlg').classList.add('hidden'); if (r) r(v || null);
+  }
+});
+
+/* ---------- the AI Dungeon Master ---------- */
+const FALL = {
+  bramble: ['Oh, the forest is lovely this time of year, dear. Mind the brambles!', 'Apple pie is best when it is still warm. Everything is, really.',
+    "Why don't hedgehogs share? They're a bit too prickly! Hee hee.", 'My back is spiky, but my heart is soft as pie crust.'],
+  olwin: ['Hoo... the forest has its secrets. Listen closely and it will tell you some.', 'Wisdom is just curiosity that has had a long nap, little boar.',
+    'A good nose is a fine thing, but a good question is better. Hoo.', 'I once counted every star. Then I lost count. Hoo, that was a lovely night.'],
+  rusty: ['Pranks are just surprise presents, little boar!', 'Foxes can hear a mouse across the meadow. Not that I would prank a mouse... much.',
+    'Truffles smell like secrets. Delicious secrets.', 'Why did the fox cross the log? To get to the other side-eye! Hee hee.']
+};
+const hist = { bramble: [], olwin: [], rusty: [] };
+const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+let aiCalls = 0, aiLast = 0;
+// The game only says WHICH animal, what the player typed and a few small facts.
+// Personas, rules and limits live in worker.js, so the page can't be used to talk to the AI "freely".
+async function askDM(n, text, wantHint = false) {
+  const fallback = () => wantHint ? 'Hmm, let me think... ' + cap(hintFor(n)) + '.' : pick(FALL[n.id]);
+  if (!AI_CONFIG.url || aiCalls >= AI_CONFIG.maxCallsPerSession) { await wait(350); return fallback(); }
+  aiCalls++;
+  const gap = 1500 - (Date.now() - aiLast); if (gap > 0) await sleep(gap);   // gentle pacing
+  aiLast = Date.now();
+  const payload = { npc: n.id, text: String(text || '').slice(0, 80), hint: wantHint, q: S.q[n.id], apples: S.items.apples, day: S.day, recent: hist[n.id].slice(-3) };
+  try {
+    const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), AI_CONFIG.timeoutMs);
+    const res = await fetch(AI_CONFIG.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: ctl.signal });
+    clearTimeout(to);
+    const data = await res.json();
+    const out = String(data.text || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+    if (!out) throw new Error(data.error || 'empty reply');
+    if (!wantHint) hist[n.id].push([payload.text, out]);
+    return out;
+  } catch (err) { console.warn('AI DM unavailable, using fallback:', err); return fallback(); }
+}
+
+/* ---------- NPC conversations ---------- */
+const RIDDLES = [
+  { q: 'The more of me you take, the more you leave behind. What am I?', a: ['Footsteps', 'Honey', 'Shadows'], ok: 0 },
+  { q: 'I have a trunk but no elephant, and bark but no dog. What am I?', a: ['A boat', 'A tree', 'A bear'], ok: 1 },
+  { q: 'I follow you all day long, but I vanish in the dark. What am I?', a: ['A firefly', 'An echo', 'Your shadow'], ok: 2 }
+];
+let riddleIdx = 0;
+
+async function talk(n) {
+  mode = 'dialog'; n.f = boar.x < n.x ? -1 : 1; faceTo(boar, n);
+  const q = S.q, it = S.items, P = n.pitch;
+  const A = (t) => say(n.name, t, P), B = (t) => say('Little Boar', t);
+  if (n.id === 'bramble') {
+    if (q.bramble === 0) {
+      await A('Oh, hello, little boar! Hello, Puki! Oh dear, oh dear...');
+      await A('I promised my cousins an apple pie, but my back is far too spiky... I mean sore, for climbing. Could you fetch me 3 apples?');
+      if (await choose(['Of course!', 'Maybe later']) === 0) { q.bramble = 1; await B('Leave it to us!'); toast('New quest: 3 apples for Bramble'); }
+      else await A('Oh... alright, dear. I will be right here.');
+    } else if (q.bramble === 1) {
+      if (it.apples >= 3) {
+        it.apples -= 3; q.bramble = 2; it.gears++; S.wisdom++; sfx.yay();
+        await A('Apples! Lovely, lovely apples! Oh, you dear things!');
+        await A('Take this. I found it in my old cart, and I bet Puki will know what to do with it.');
+        toast('Got a gear!  ⚙');
+      } else await A(`Still ${3 - it.apples} to go, dear. Look for the apple trees around the clearing.`);
+    }
+  } else if (n.id === 'olwin') {
+    if (q.olwin === 0) {
+      await A('Hoooo... a young boar and a penguin chick. Curious ones, I see.');
+      await A('I do enjoy a good riddle. Answer one for me, and I shall give you something useful.');
+      q.olwin = 1; toast('New quest: Olwin\'s riddle');
+    }
+    if (q.olwin === 1) await riddle(n);
+  } else if (n.id === 'rusty') {
+    if (q.rusty === 0) await rustyPrank(n);
+    else if (q.rusty === 1) await A('Still sniffing? Head south-west, to the old mossy rock. Your nose will know. Press F!');
+    else if (q.rusty === 2) {
+      q.rusty = 3; it.gears++; S.wisdom++; sfx.yay();
+      await A('You found it?! Hee hee, and I thought I hid it so well!');
+      await A('Keep it. That shiny thing is a gear, right? Puki will love it. I like you, little boar.');
+      toast('Got a gear!  ⚙');
+    }
+  }
+  // free chat menu
+  for (;;) {
+    const opts = ['Chat', 'Ask for a hint', 'Goodbye']; if (n.id === 'olwin' && q.olwin === 1) opts.splice(1, 0, 'Try a riddle');
+    const c = opts[await choose(opts, `Talk to ${n.name}:`)];
+    if (c === 'Goodbye') break;
+    if (c === 'Try a riddle') { await riddle(n); continue; }
+    if (c === 'Ask for a hint') {
+      say(n.name, '…', P);
+      const r = await askDM(n, '', true);
+      await A(r); continue;
+    }
+    const topics = ['Tell me about the forest.', 'What is your favourite food?', 'Tell me a joke!', 'Say something else...', 'Back'];
+    const t = await choose(topics, 'What do you say?');
+    if (t === 4) continue;
+    let text = topics[t];
+    if (t === 3) { text = await askText(`Say something to ${n.name}  (Enter to send, Esc to cancel)`); if (!text) continue; }
+    say(n.name, '…', P);
+    const r = await askDM(n, text); S.chats[n.id]++; await A(r);
+  }
+  mode = 'play'; save();
+  await gearsMoment();
+}
+function hintFor(n) {
+  if (n.id === 'bramble') return S.q.bramble === 0 ? 'ask Bramble if he needs help' : S.q.bramble === 1 ? 'apple trees grow around the big clearing and each gives two apples' : 'enjoy the pie smell';
+  if (n.id === 'olwin') return S.q.olwin === 1 ? 'think about the riddle, the answer is something ordinary you meet every day' : 'be curious';
+  return S.q.rusty === 1 ? 'press F to sniff near the old mossy rock in the south-west and dig where the nose says' : S.q.rusty === 2 ? 'come back and tell Rusty' : 'have fun';
+}
+async function riddle(n) {
+  const r = RIDDLES[riddleIdx++ % RIDDLES.length];
+  await say(n.name, r.q, n.pitch);
+  const i = await choose(r.a, 'Your answer?');
+  if (i === r.ok) {
+    S.q.olwin = 2; S.items.gears++; S.wisdom += 2; sfx.yay();
+    await say(n.name, 'Hoo hoo! Wise little boar! Very wise indeed.', n.pitch);
+    await say(n.name, 'Here, an old gear from my clock tree. I believe your friend with the blue backpack can use it.', n.pitch);
+    toast('Got a gear!  ⚙');
+  } else await say(n.name, 'Hmm... not quite. Think it over, and try another riddle when you are ready.', n.pitch);
+}
+async function rustyPrank(n) {
+  const A = t => say('Rusty', t, n.pitch);
+  await A('Psst! Hey, little boar, over here! Look, a truffle!');
+  mode = 'cutscene'; dialogAfterHide();
+  await throwPinecone(n, boar);
+  hop(boar); boar.shake = .4; sfx.squeal(); emote(boar, '!'); await wait(500);
+  await say('Little Boar', 'Ow! That was a pinecone!');
+  await A('Hee hee hee! Gotcha!');
+  puki.dir = n.x < puki.x ? 'left' : 'right'; emote(puki, '…');
+  await say('Puki', '...Rusty.', 520);
+  await A('Okay, okay, I am sorry! Let me make it up to you.');
+  await A('I buried a shiny treasure near the old mossy rock, to the south-west. Use that famous nose of yours to sniff it out! (Press F to sniff.)');
+  S.q.rusty = 1; toast('New quest: Rusty\'s buried treasure'); mode = 'dialog';
+}
+function dialogAfterHide() { /* dialog already hidden by advanceDialog */ }
+function throwPinecone(from, to) {
+  return new Promise(res => {
+    const x0 = from.x, y0 = from.y - 8, d = 0.5; let t = 0;
+    effects.push({ update(dt) { t += dt; if (t >= d) { burst(to.x, to.y - 6, 8, ['#8a5a3a', '#c9a066'], 40); sfx.dig(); res(); return true; } },
+      draw() { const k = t / d, x = x0 + (to.x - x0) * k, y = y0 + (to.y - 8 - y0) * k - Math.sin(k * Math.PI) * 18;
+        ctx.fillStyle = '#7a4a28'; ctx.fillRect(Math.round(x - cam.x) - 1, Math.round(y - cam.y) - 1, 3, 3); ctx.fillStyle = '#a8703e'; ctx.fillRect(Math.round(x - cam.x), Math.round(y - cam.y) - 1, 1, 1); } });
+  });
+}
+async function gearsMoment() {
+  if (S.items.gears < 3 || S.gearsNoted) return;
+  S.gearsNoted = true; mode = 'cutscene';
+  await walkTo(puki, boar.x - 16, boar.y, 60); puki.dir = 'right'; boar.dir = 'left';
+  await say('Puki', 'Little boar. Gears. Three.', 520);
+  await say('Little Boar', 'Is that enough for something?');
+  puki.bulb = true; sfx.ding(); await wait(700);
+  await say('Puki', 'The bridge. I can fix it!', 520);
+  puki.bulb = false; toast('Take Puki to the broken bridge in the east!'); mode = 'play'; save();
+}
+
+/* ---------- player actions ---------- */
+function nearest() {
+  let best = null, bd = 1e9;
+  const c = (k, o, x, y, r, label) => { const d = Math.hypot(boar.x - x, boar.y - y); if (d < r && d < bd) { bd = d; best = { k, o, x, y, label }; } };
+  npcs.forEach(n => c('npc', n, n.x, n.y, 26, 'Talk'));
+  if (puki.visible) c('puki', puki, puki.x, puki.y, 22, 'Puki');
+  c('door', null, doorX, doorY, 24, 'Sleep');
+  objs.forEach(o => {
+    if (o.type === 'apple' && (S.apples[o.id] || 0) < 2) c('apple', o, o.x, o.y, 24, 'Pick apple');
+    else if (o.type === 'berry' && (S.berries[o.id] || 0) < 3) c('berry', o, o.x, o.y, 24, 'Eat berries');
+    else if (o.type === 'sign') c('sign', o, o.x, o.y, 24, 'Read');
+  });
+  c('bridge', null, bridgeSpot.x, bridgeSpot.y, 26, S.bridge ? 'Bridge' : S.items.gears >= 3 ? 'Fix bridge' : 'Look');
+  c('dig', null, digX + 8, digY + 4, 20, 'Dig');
+  return best;
+}
+async function interact() {
+  if (busy) return; const t = nearest();
+  if (!t) return tryDig();
+  if (t.k === 'npc') return talk(t.o);
+  if (t.k === 'puki') return talkPuki();
+  if (t.k === 'dig') return digSpot();
+  if (t.k === 'door') return sleepHome();
+  if (t.k === 'apple') { S.apples[t.o.id] = (S.apples[t.o.id] || 0) + 1; S.items.apples++; sfx.pick(); burst(t.o.x, t.o.y - 16, 6, ['#d33', '#f66'], 30); toast('🍎 Apple!'); return; }
+  if (t.k === 'berry') { S.berries[t.o.id] = (S.berries[t.o.id] || 0) + 1; S.items.berries++; sfx.pick(); burst(boar.x, boar.y - 6, 5, ['#3a4fd0', '#6a7ff0'], 25); emote(boar, '♥', 700); toast('🫐 Yum!'); return; }
+  if (t.k === 'sign') { mode = 'dialog'; await say('', 'MOUNTAINS  →  coming soon!\n(The forest ends here for now. Thank you for playing chapter 1!)'); mode = 'play'; return; }
+  if (t.k === 'bridge') return bridge();
+}
+async function talkPuki() {
+  mode = 'dialog'; faceTo(boar, puki); faceTo(puki, boar);
+  const lines = ['...', '*taps a wrench*', 'Hm.', 'Bright idea?', '*checks backpack*', 'Snack?', '*hums quietly*'];
+  emote(puki, '♪', 900); await say('Puki', pick(lines), 520);
+  if (S.items.gears > 0 && S.items.gears < 3) await say('Puki', `*counts gears: ${S.items.gears} of 3*`, 520);
+  mode = 'play';
+}
+async function sleepHome() {
+  mode = 'dialog'; const c = await choose(['Sleep until morning', 'Not yet'], 'Little Boar\'s cosy home.');
+  if (c === 0) {
+    mode = 'cutscene'; await fadeOut(); S.day++; S.apples = {}; S.berries = {};
+    await wait(500); await fadeIn(); toast(`Day ${S.day} — the berries and apples have grown back!`, 3000); save();
+  }
+  mode = 'play';
+}
+async function digSpot() {
+  busy = true; mode = 'cutscene'; boar.digging = true; boar.dir = 'right';
+  for (let i = 0; i < 5; i++) { sfx.dig(); burst(boar.x + 6, boar.y - 2, 4, ['#7c5533', '#664428', '#8a6a44'], 30); await wait(240); }
+  boar.digging = false; const r = Math.random();
+  if (r < .08) { S.items.truffles++; sfx.ding(); toast('🍄 A truffle!! Lucky boar!'); }
+  else if (r < .55) { S.items.worms++; sfx.pick(); toast('🪱 An earthworm. Tasty!'); }
+  else { S.items.bugs++; sfx.pick(); toast('🐛 A juicy bug. Crunch!'); }
+  emote(boar, '♥', 800); busy = false; mode = 'play';
+}
+async function tryDig() {
+  if (busy || mode !== 'play') return;
+  busy = true; mode = 'cutscene'; boar.digging = true;
+  for (let i = 0; i < 4; i++) { sfx.dig(); burst(boar.x + (boar.dir === 'left' ? -6 : 6), boar.y - 2, 3, ['#4a7a3a', '#7c5533'], 28); await wait(230); }
+  boar.digging = false;
+  const b = buried.find(b => !S.found[b.id] && Math.hypot(b.x - boar.x, b.y - boar.y) < 15 && (b.kind !== 'stash' || S.q.rusty >= 1));
+  if (b) {
+    S.found[b.id] = true; sniffHint = null; sfx.ding(); burst(b.x, b.y - 4, 14, ['#ffe66b', '#fff', '#f4a'], 50, .9); hop(boar);
+    if (b.kind === 'truffle') {
+      S.items.truffles++; toast('🍄 You dug up a truffle!');
+      S.sniffXp++; if (S.sniffXp % 2 === 0) { S.sniff++; await wait(600); toast('Your nose got sharper! (sniff range up)', 2800); }
+    } else { S.q.rusty = 2; toast('✨ You found Rusty\'s buried treasure!', 2800); await wait(900); emote(puki, '!'); }
+  } else if (Math.random() < .3) { S.items.bugs++; sfx.pick(); toast('🐛 A bug!'); }
+  else toast('Just dirt here...', 1400);
+  busy = false; mode = 'play'; save();
+}
+function sniff() {
+  if (busy || mode !== 'play') return;
+  const rad = 56 + 16 * S.sniff; sfx.tink();
+  effects.push({ t: 0, update(dt) { this.t += dt; return this.t > 1; },
+    draw() { ctx.strokeStyle = `rgba(255,255,255,${.6 - this.t * .55})`; ctx.lineWidth = 1; ctx.beginPath();
+      ctx.arc(Math.round(boar.x - cam.x), Math.round(boar.y - cam.y - 5), this.t * rad, 0, 7); ctx.stroke(); } });
+  emote(boar, '~', 900);
+  let best = null, bd = rad;
+  buried.forEach(b => { if (S.found[b.id] || (b.kind === 'stash' && S.q.rusty < 1)) return; const d = Math.hypot(b.x - boar.x, b.y - boar.y); if (d < bd) { bd = d; best = b; } });
+  if (best) { sniffHint = { b: best, t: 4.5, rad }; toast('You smell something buried nearby!  (stand on it, press E)', 3000); }
+  else toast('Sniff sniff... nothing buried nearby.', 1800);
+}
+async function bridge() {
+  mode = 'dialog';
+  if (S.bridge) { await say('', 'The bridge is sturdy again. Beyond it, the forest path winds toward the mountains.'); mode = 'play'; return; }
+  if (S.items.gears < 3) { await say('', 'The old bridge is broken. Puki taps her backpack and shakes her head: "Not enough parts yet."'); mode = 'play'; return; }
+  if (await choose(['Ask Puki to fix the bridge', 'Not yet']) !== 0) { mode = 'play'; return; }
+  mode = 'cutscene';
+  await walkTo(puki, bridgeSpot.x - 8, bridgeSpot.y - 8, 60); puki.dir = 'right'; boar.dir = 'right';
+  await say('Puki', '...Leave it to me.', 520);
+  puki.bulb = true; sfx.ding();
+  for (let i = 0; i < 14; i++) { sfx.tink(); burst(47 * T - 8, 19 * T + 12 + (i % 2) * 14, 5, ['#ffe66b', '#fff', '#ffb34a'], 50, .5); await wait(180); }
+  S.bridge = true; applyBridge(); sfx.yay(); puki.bulb = false;
+  await say('Puki', 'Done.', 520); await say('Little Boar', 'Wow! Puki, you are amazing!');
+  puki.blush = true; emote(puki, '///', 1500); await wait(1200); puki.blush = false;
+  await say('', 'Chapter 1 complete!  The mountains lie beyond the bridge... to be continued.');
+  mode = 'play'; save();
+}
+
+/* ---------- story: the flashing-lights intro ---------- */
+async function newGame() {
+  S = newState(); applyBridge(); for (const k in hist) hist[k] = [];
+  $('title').classList.add('hidden'); await fadeOut();
+  lights.length = 0; effects.length = 0; particles.length = 0;
+  dusk = 1; dark = 0.12; darkT = 0.12;
+  boar.x = digX; boar.y = digY + 8; boar.dir = 'right'; boar.digging = true; boar.scared = false;
+  puki.visible = false; puki.follow = false; puki.bulb = false; puki.blush = false;
+  cam.x = clamp(boar.x - W / 2, 0, MW * T - W); cam.y = clamp(boar.y - H / 2, 0, MH * T - H);
+  mode = 'cutscene'; await fadeIn(); intro();
+}
+async function intro() {
+  const bx = boar.x, by = boar.y, B = t => say('Little Boar', t), P = t => say('Puki', t, 520);
+  darkT = .3; await wait(1200);
+  await say('', 'The sun is going down in the forest. Little Boar is busy digging for a snack...');
+  await wait(600);
+  flash(bx + 72, by - 46); await wait(500); boar.digging = false; boar.dir = 'right'; emote(boar, '?'); await wait(700);
+  await B('Hm? What was that light?');
+  await wait(600); boar.digging = true; darkT = .4; await wait(2200);
+  flash(bx - 66, by - 60); boar.digging = false; boar.dir = 'up'; emote(boar, '!'); boar.shake = .6; await wait(900);
+  await B('W-what is going on? What IS that light?!');
+  puki.visible = true; puki.x = bx - 130; puki.y = by + 6; puki.dir = 'right'; darkT = .5;
+  await walkTo(puki, bx - 22, by + 6, 34); puki.dir = 'right';
+  hop(boar); boar.shake = .5; sfx.squeal(); emote(boar, '!!'); faceTo(boar, puki);
+  await P('Hey, little boar! How\'s it going?');
+  await B('Eeek! ...Oh! It\'s only you, Puki.');
+  await B('Did you see that? Did you see those flashes?');
+  emote(puki, '?'); await P('...What flashes?');
+  flash(bx + 26, by - 24); hop(boar); hop(puki); boar.shake = .5; puki.shake = .5; sfx.squeal(); emote(boar, '!'); emote(puki, '!'); await wait(500);
+  await Promise.all([walkTo(boar, bx - 112, by + 10, 120), walkTo(puki, bx - 134, by + 12, 120)]);
+  boar.dir = 'right'; puki.dir = 'right'; await wait(500);
+  await B('That! What\'s THAT?!');
+  puki.blush = true; emote(puki, '///', 1800); await wait(600);
+  await P('...mm... mmm-hmm... mm.');
+  await P('...I don\'t know.');
+  puki.blush = false; darkT = .62;
+  await B('It\'s getting dark. Let\'s go home, Puki.');
+  await Promise.all([walkTo(boar, boar.x - 22, boar.y + 2, 40), walkTo(puki, puki.x - 22, puki.y + 2, 40)]);
+  flash(bx + 70, by + 70); boar.dir = 'left'; emote(boar, '!');
+  walkTo(boar, boar.x - 24, boar.y, 85); puki.dir = 'right'; await wait(400); emote(puki, '?', 1500); await wait(1600);
+  puki.bulb = true; sfx.ding(); await wait(900);
+  await P('I know!');
+  boar.scared = true; boar.shake = 1.6; hop(boar, .5); sfx.squeal(); faceTo(boar, puki); emote(boar, '!!!', 1600); await wait(1500);
+  faceTo(puki, boar);
+  await P('We are in the enchanted part of the forest!');
+  await P('It\'s a bright idea! Every flash is a bright idea!');
+  boar.scared = false; emote(puki, '^_^', 1500); await wait(700); emote(boar, '♥', 1200);
+  await B('Cool, we\'re not in the dark now!');
+  puki.follow = true; mode = 'play'; toast('Walk home with Puki — follow the glow! (arrows / WASD)', 4200);
+}
+async function endIntro() {
+  mode = 'cutscene'; boar.moving = false;
+  await walkTo(boar, doorX, doorY + 2, 45); boar.dir = 'up';
+  await say('Little Boar', 'Home sweet home! Thank you for the light, Puki.');
+  puki.dir = 'right'; await say('Puki', 'Night, little boar.', 520);
+  await fadeOut();
+  S.introDone = true; dark = darkT = 0; dusk = 0; puki.bulb = false;
+  boar.x = doorX + 2; boar.y = doorY + 14; boar.dir = 'down'; puki.x = boar.x - 18; puki.y = boar.y + 2; puki.dir = 'down';
+  cam.x = clamp(boar.x - W / 2, 0, MW * T - W); cam.y = clamp(boar.y - H / 2, 0, MH * T - H);
+  await wait(600);
+  await say('', 'The next morning... the forest is bright, and full of smells.');
+  await fadeIn(); mode = 'play'; save();
+  toast('Explore, dig, sniff (F) and meet your neighbours. Tab = journal.', 5000);
+}
+function continueGame() {
+  const d = loadSave(); if (!d) return newGame();
+  S = d; applyBridge(); $('title').classList.add('hidden');
+  dark = darkT = 0; dusk = 0; lights.length = 0;
+  boar.x = S.px; boar.y = S.py; boar.digging = false; boar.scared = false;
+  puki.visible = true; puki.follow = true; puki.bulb = false; puki.x = boar.x - 18; puki.y = boar.y + 2;
+  cam.x = clamp(boar.x - W / 2, 0, MW * T - W); cam.y = clamp(boar.y - H / 2, 0, MH * T - H);
+  mode = 'play'; toast('Welcome back, little boar!');
+}
+
+/* ---------- journal ---------- */
+const heartsOf = id => { const done = S.q[id] >= (id === 'rusty' ? 3 : 2); return Math.min(5, (S.q[id] > 0 ? 1 : 0) + (done ? 2 : 0) + Math.floor(S.chats[id] / 2)); };
+function toggleJournal() {
+  journalOpen = !journalOpen; const j = $('journal'); j.classList.toggle('hidden', !journalOpen); if (!journalOpen) return;
+  const hs = id => '♥'.repeat(heartsOf(id)) + '♡'.repeat(5 - heartsOf(id));
+  const I = S.items;
+  j.innerHTML = `<h2>Journal — day ${S.day}</h2>
+   <div>Wisdom: ${'★'.repeat(Math.min(6, S.wisdom))}${'☆'.repeat(Math.max(0, 6 - S.wisdom))} &nbsp; Nose level: ${S.sniff}</div>
+   <div>🫐 ${I.berries} &nbsp; 🪱 ${I.worms} &nbsp; 🐛 ${I.bugs} &nbsp; 🍄 ${I.truffles} &nbsp; 🍎 ${I.apples} &nbsp; ⚙ ${I.gears}/3</div><br>
+   <div>Friends</div>
+   <div>Bramble the hedgehog &nbsp; ${hs('bramble')}</div>
+   <div>Olwin the owl &nbsp; ${hs('olwin')}</div>
+   <div>Rusty the fox &nbsp; ${hs('rusty')}</div><br>
+   <div>Goal: ${objective()}</div><br>
+   <div style="color:#aaa">Press Tab to close. Chatting with friends makes them like you more!</div>`;
+}
+function objective() {
+  if (!S.introDone) return 'Walk home with Puki.';
+  if (S.bridge) return 'Chapter 1 complete! Roam, dig and chat.';
+  if (S.items.gears >= 3) return 'Take Puki to the broken bridge in the east!';
+  const o = [];
+  if (S.q.bramble === 1) o.push(`Bramble: bring 3 apples (${S.items.apples}/3)`);
+  if (S.q.olwin === 1) o.push('Olwin: answer a riddle');
+  if (S.q.rusty === 1) o.push('Rusty: sniff out the treasure (SW, press F)');
+  if (S.q.rusty === 2) o.push('Tell Rusty you found his treasure');
+  return o.length ? o.join('  •  ') : 'Explore the forest and meet your neighbours!';
+}
+function renderHud() {
+  if (mode === 'title') { $('hud').innerHTML = ''; return; }
+  const I = S.items;
+  $('hud').innerHTML = `<div>🫐${I.berries} 🪱${I.worms} 🐛${I.bugs} 🍄${I.truffles} 🍎${I.apples} ⚙${I.gears}/3</div><div class="obj">${objective()}</div>`;
+}
+
+/* ---------- input ---------- */
+addEventListener('keydown', e => {
+  audio();
+  if (e.target === $('dinput')) return;
+  const k = e.key.toLowerCase();
+  if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'tab'].includes(k)) e.preventDefault();
+  keys[k] = true;
+  if (k === 'm' && !e.repeat) { muted = !muted; toast(muted ? 'Sound off' : 'Sound on', 900); return; }
+  if (e.repeat) return;
+  const act = k === 'e' || k === ' ' || k === 'enter';
+  if (mode === 'title') return;
+  if (chRes) {
+    if (k === 'arrowup' || k === 'w') { chSel = (chSel + chCount - 1) % chCount; renderSel(); }
+    else if (k === 'arrowdown' || k === 's') { chSel = (chSel + 1) % chCount; renderSel(); }
+    else if (act) confirmChoice();
+    return;
+  }
+  if (inputRes) return;
+  if (dlgRes) { if (act) advanceDialog(); return; }
+  if (k === 'tab' && mode === 'play') return toggleJournal();
+  if (k === 'escape' && journalOpen) return toggleJournal();
+  if (journalOpen) return;
+  if (mode === 'play') { if (act) interact(); else if (k === 'f') sniff(); }
+});
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+function buildTitle() {
+  const box = $('tbtns'); box.innerHTML = '';
+  const mk = (txt, fn) => { const b = document.createElement('button'); b.textContent = txt; b.onclick = () => { audio(); fn(); }; box.appendChild(b); return b; };
+  const has = loadSave(); let first;
+  if (has) first = mk('Continue', continueGame);
+  const nb = mk('New game', () => { if (has && !confirm('Start over? Your saved progress will be replaced.')) return; newGame(); });
+  (first || nb).focus();
+}
+
+/* ---------- update ---------- */
+const solidAt = (x, y) => { const tx = Math.floor(x / T), ty = Math.floor(y / T); return !inMap(tx, ty) || solid[ty][tx] === 1; };
+const canStand = (x, y) => !(solidAt(x - 4, y) || solidAt(x + 4, y) || solidAt(x - 4, y - 4) || solidAt(x + 4, y - 4));
+function stepTarget(e, dt) {
+  const t = e.target; if (!t) return;
+  const dx = t.x - e.x, dy = t.y - e.y, d = Math.hypot(dx, dy), sp = t.speed * dt;
+  e.t += dt;
+  if (d <= sp) { e.x = t.x; e.y = t.y; e.moving = false; e.target = null; t.res(); return; }
+  e.x += dx / d * sp; e.y += dy / d * sp; e.moving = true; setDir(e, dx, dy);
+}
+function update(dt) {
+  time += dt;
+  for (let i = timers.length - 1; i >= 0; i--) { timers[i].t -= dt; if (timers[i].t <= 0) { const r = timers[i].r; timers.splice(i, 1); r(); } }
+  dark += (darkT - dark) * Math.min(1, dt * 1.2);
+  for (const e of [boar, puki]) {
+    stepTarget(e, dt);
+    if (e.emote && (e.emote.t -= dt) <= 0) e.emote = null;
+    if (e.shake > 0) e.shake -= dt; if (e.hop > 0) e.hop -= dt;
+  }
+  for (let i = lights.length - 1; i >= 0; i--) { lights[i].t += dt; if (lights[i].t > lights[i].dur) lights.splice(i, 1); }
+  for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 90 * dt; if (p.life <= 0) particles.splice(i, 1); }
+  for (let i = effects.length - 1; i >= 0; i--) if (effects[i].update(dt)) effects.splice(i, 1);
+  if (sniffHint && (sniffHint.t -= dt) <= 0) sniffHint = null;
+
+  if (mode === 'title') {
+    boar.x = digX; boar.y = digY + 8; boar.dir = 'right'; boar.digging = true;
+    puki.visible = true; puki.bulb = true; puki.x = digX - 22; puki.y = digY + 10; puki.dir = 'right';
+    cam.x = digX - W / 2; cam.y = digY - H / 2; darkT = .72; dusk = 1;
+    if (Math.random() < dt * .5) flash(digX + (Math.random() - .5) * 220, digY + (Math.random() - .5) * 120);
+  }
+  if (boar.digging && mode !== 'title' && Math.random() < dt * 6) burst(boar.x + (boar.dir === 'left' ? -6 : 6), boar.y - 1, 1, ['#7c5533', '#664428'], 25, .5);
+
+  if (mode === 'play' && !journalOpen) {
+    let dx = (keys['arrowright'] || keys['d'] ? 1 : 0) - (keys['arrowleft'] || keys['a'] ? 1 : 0);
+    let dy = (keys['arrowdown'] || keys['s'] ? 1 : 0) - (keys['arrowup'] || keys['w'] ? 1 : 0);
+    boar.moving = false;
+    if (boar.stumble > 0) { boar.stumble -= dt; dx = dy = 0; }
+    if (dx || dy) {
+      const l = Math.hypot(dx, dy), sp = 58 * dt; dx = dx / l * sp; dy = dy / l * sp;
+      const blockedByNpc = (x, y) => npcs.some(n => Math.hypot(x - n.x, y - n.y) < 9 && Math.hypot(boar.x - n.x, boar.y - n.y) >= 9);
+      if (dx && canStand(boar.x + dx, boar.y) && !blockedByNpc(boar.x + dx, boar.y)) boar.x += dx;
+      if (dy && canStand(boar.x, boar.y + dy) && !blockedByNpc(boar.x, boar.y + dy)) boar.y += dy;
+      setDir(boar, dx, dy); boar.moving = true; boar.t += dt;
+      if (S.introDone && Math.random() < dt * .035) { boar.stumble = .6; hop(boar, .3); emote(boar, '*', 700); burst(boar.x, boar.y, 5, ['#c9b38a'], 30); }
+    }
+    target = nearest();
+    if (!S.introDone && dist(boar, { x: doorX, y: doorY }) < 26 && mode === 'play') endIntro();
+  } else target = null;
+
+  if (puki.follow && puki.visible && !puki.target && (mode === 'play' || mode === 'dialog')) {
+    const dx = boar.x - puki.x, dy = boar.y - puki.y, d = Math.hypot(dx, dy);
+    puki.moving = false;
+    if (d > 170) { puki.x = boar.x - 14; puki.y = boar.y + 2; }
+    else if (d > 22 && mode === 'play') {
+      const sp = Math.min(66, 18 + (d - 18) * 3) * dt, mx = dx / d * sp, my = dy / d * sp; let moved = false;
+      if (canStand(puki.x + mx, puki.y)) { puki.x += mx; moved = true; } if (canStand(puki.x, puki.y + my)) { puki.y += my; moved = true; }
+      puki.stuck = moved ? 0 : puki.stuck + dt; if (puki.stuck > 1.2) { puki.x = boar.x - 12; puki.y = boar.y + 2; puki.stuck = 0; }
+      setDir(puki, dx, dy); puki.moving = true; puki.t += dt;
+    }
+  }
+  if (mode === 'play' || mode === 'dialog' || mode === 'cutscene') {
+    const tx = clamp(boar.x - W / 2, 0, MW * T - W), ty = clamp(boar.y - 8 - H / 2, 0, MH * T - H);
+    cam.x += (tx - cam.x) * Math.min(1, dt * 6); cam.y += (ty - cam.y) * Math.min(1, dt * 6);
+  }
+  // typewriter
+  if (typing) {
+    typeT += dt * 44; const n = Math.floor(typeT);
+    $('dtext').textContent = typeFull.slice(0, n);
+    if (n - lastBlip >= 2) { lastBlip = n; tone(curPitch + Math.random() * 50, .04, 'square', .02); }
+    if (n >= typeFull.length) { typing = false; $('dnext').classList.remove('hidden'); }
+  }
+  hudTimer -= dt; if (hudTimer <= 0) { hudTimer = .25; renderHud(); }
+  saveTimer -= dt; if (saveTimer <= 0) { saveTimer = 8; if (mode === 'play') save(); }
+}
+
+/* ---------- drawing ---------- */
+const mk = (x, y, f) => (dx, dy, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(f === 1 ? x + dx : x - dx - w), Math.round(y + dy), w, h); };
+const ORANGE = '#f2a21c';
+
+function drawTile(tx, ty, sx, sy) {
+  const g = ground[ty][tx], h = hash(tx, ty, 1);
+  if (g === 3) {
+    ctx.fillStyle = '#3a78c8'; ctx.fillRect(sx, sy, T, T); ctx.fillStyle = '#5b9be0';
+    const o = Math.floor(time * 2 + h % 7) % 4; ctx.fillRect(sx + 2 + o * 3, sy + 4 + h % 5, 5, 1); ctx.fillRect(sx + 9 - o * 2, sy + 11, 4, 1);
+    if (!S.bridge && tx >= FEAT.river[0] && tx <= FEAT.river[1] && ty >= FEAT.bridgeRows[0] && ty <= FEAT.bridgeRows[1]) {
+      ctx.fillStyle = '#7a4f28'; if (tx === FEAT.river[0]) { ctx.fillRect(sx, sy + 2, 5, 5); ctx.fillRect(sx, sy + 9, 3, 5); } else { ctx.fillRect(sx + 11, sy + 2, 5, 5); ctx.fillRect(sx + 13, sy + 9, 3, 5); }
+    }
+  } else if (g === 4) {
+    ctx.fillStyle = '#3a78c8'; ctx.fillRect(sx, sy, T, T); ctx.fillStyle = '#a06c3a'; ctx.fillRect(sx, sy + 1, T, 14);
+    ctx.fillStyle = '#7a4f28'; for (let i = 0; i < 4; i++) ctx.fillRect(sx + i * 4 + 3, sy + 1, 1, 14); ctx.fillRect(sx, sy + 1, T, 1); ctx.fillRect(sx, sy + 14, T, 1);
+  } else if (g === 1) {
+    ctx.fillStyle = '#c8a56a'; ctx.fillRect(sx, sy, T, T); ctx.fillStyle = '#b69558';
+    ctx.fillRect(sx + h % 13, sy + (h >>> 4) % 13, 2, 1); ctx.fillRect(sx + (h >>> 8) % 13, sy + (h >>> 12) % 13, 1, 1); ctx.fillStyle = '#d8b87e'; ctx.fillRect(sx + (h >>> 6) % 12, sy + (h >>> 3) % 12, 2, 1);
+  } else if (g === 2) {
+    ctx.fillStyle = '#7c5533'; ctx.fillRect(sx, sy, T, T); ctx.fillStyle = '#664428'; ctx.fillRect(sx + 2, sy + 3, 4, 2); ctx.fillRect(sx + 9, sy + 9, 5, 2); ctx.fillStyle = '#9a7048'; ctx.fillRect(sx + 8, sy + 3, 2, 1); ctx.fillRect(sx + 3, sy + 11, 2, 1);
+  } else {
+    ctx.fillStyle = ((tx + ty) & 1) ? '#4b8f40' : '#478a3d'; ctx.fillRect(sx, sy, T, T);
+    if (h % 3 === 0) { ctx.fillStyle = '#3b7a33'; ctx.fillRect(sx + h % 12, sy + (h >>> 4) % 12, 1, 2); }
+    if (h % 5 === 0) { ctx.fillStyle = '#5ba84c'; ctx.fillRect(sx + (h >>> 3) % 12, sy + (h >>> 7) % 12, 2, 1); }
+    if (h % 23 === 0) { ctx.fillStyle = ['#f4d03f', '#f08ab5', '#ffffff'][h % 3]; ctx.fillRect(sx + 5, sy + 6, 2, 2); ctx.fillStyle = '#3b7a33'; ctx.fillRect(sx + 6, sy + 8, 1, 2); }
+  }
+}
+function drawTree(t, cx, cy, apples) {
+  const bx = t.tx * T + 8 - cx, by = t.ty * T + 14 - cy, v = t.v || 0;
+  ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(bx - 8, by - 2, 16, 3);
+  ctx.fillStyle = '#6b4a2e'; ctx.fillRect(bx - 2, by - 9, 4, 9); ctx.fillStyle = '#563a22'; ctx.fillRect(bx + 1, by - 9, 1, 9);
+  const g0 = '#2f7a38', g1 = '#3f9446', g2 = '#58b055';
+  ctx.fillStyle = '#256a2f'; ctx.fillRect(bx - 12, by - 14, 24, 3);
+  ctx.fillStyle = g0; ctx.fillRect(bx - 12, by - 20, 24, 8); ctx.fillRect(bx - 10, by - 24 - v, 20, 6); ctx.fillRect(bx - 7, by - 29 - v, 14, 6);
+  ctx.fillStyle = g1; ctx.fillRect(bx - 9, by - 22, 8, 4); ctx.fillRect(bx - 5, by - 28 - v, 7, 3); ctx.fillRect(bx + 3, by - 18, 6, 3);
+  ctx.fillStyle = g2; ctx.fillRect(bx - 6, by - 27 - v, 4, 2); ctx.fillRect(bx - 9, by - 21, 3, 2);
+  if (apples > 0) { const pos = [[-7, -19], [4, -22], [6, -16]]; for (let i = 0; i < apples; i++) { const [ax, ay] = pos[i]; ctx.fillStyle = '#d83a3a'; ctx.fillRect(bx + ax, by + ay, 3, 3); ctx.fillStyle = '#ff8a8a'; ctx.fillRect(bx + ax, by + ay, 1, 1); } }
+}
+function drawBush(o, cx, cy) {
+  const bx = o.x - cx, by = o.y - cy, left = 3 - (S.berries[o.id] || 0);
+  ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.fillRect(bx - 7, by - 1, 14, 3);
+  ctx.fillStyle = '#2f7a38'; ctx.fillRect(bx - 7, by - 8, 14, 8); ctx.fillStyle = '#3f9446'; ctx.fillRect(bx - 5, by - 11, 10, 4); ctx.fillStyle = '#58b055'; ctx.fillRect(bx - 3, by - 10, 3, 1);
+  const pos = [[-5, -6], [1, -9], [4, -4]];
+  for (let i = 0; i < left; i++) { ctx.fillStyle = '#3a4fd0'; ctx.fillRect(bx + pos[i][0], by + pos[i][1], 3, 3); ctx.fillStyle = '#8a9cff'; ctx.fillRect(bx + pos[i][0], by + pos[i][1], 1, 1); }
+}
+function drawRock(o, cx, cy) {
+  const bx = o.x - cx, by = o.y - cy;
+  ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.fillRect(bx - 9, by - 1, 18, 3);
+  ctx.fillStyle = '#7d828b'; ctx.fillRect(bx - 8, by - 9, 16, 9); ctx.fillStyle = '#9ba0a9'; ctx.fillRect(bx - 5, by - 12, 10, 4); ctx.fillStyle = '#b5bac2'; ctx.fillRect(bx - 3, by - 11, 4, 1);
+  ctx.fillStyle = '#5a8a4a'; ctx.fillRect(bx - 8, by - 6, 5, 3); ctx.fillRect(bx + 3, by - 9, 4, 2);
+}
+function drawSign(o, cx, cy) {
+  const bx = o.x - cx, by = o.y - cy;
+  ctx.fillStyle = '#6b4a2e'; ctx.fillRect(bx - 1, by - 10, 3, 10); ctx.fillStyle = '#c9a066'; ctx.fillRect(bx - 9, by - 17, 18, 8);
+  ctx.fillStyle = '#6b4a2e'; ctx.fillRect(bx - 7, by - 15, 14, 1); ctx.fillRect(bx - 7, by - 12, 10, 1);
+}
+function drawHut(cx, cy) {
+  const x0 = FEAT.hut.tx * T - cx, y0 = FEAT.hut.ty * T - cy;
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(x0 + 2, y0 + 45, 46, 4);
+  ctx.fillStyle = '#8a5a3a'; ctx.fillRect(x0 + 4, y0 + 22, 40, 26); ctx.fillStyle = '#6e4529'; for (let i = 0; i < 5; i++) ctx.fillRect(x0 + 4, y0 + 26 + i * 5, 40, 1);
+  for (let i = 0; i < 16; i++) { ctx.fillStyle = i % 4 === 0 ? '#9c4429' : '#b5482e'; ctx.fillRect(x0 + 24 - 4 - i * 1.4 | 0, y0 + 4 + i, 8 + (i * 2.8 | 0), 1); }
+  ctx.fillStyle = '#7a3420'; ctx.fillRect(x0 + 2, y0 + 19, 44, 3);
+  ctx.fillStyle = '#4a2c18'; ctx.fillRect(x0 + 19, y0 + 32, 10, 16); ctx.fillStyle = '#e8c860'; ctx.fillRect(x0 + 26, y0 + 40, 1, 2);
+  ctx.fillStyle = dark > .2 ? '#ffe9a0' : '#9ad0e8'; ctx.fillRect(x0 + 8, y0 + 28, 8, 8); ctx.fillStyle = '#4a2c18'; ctx.fillRect(x0 + 11, y0 + 28, 1, 8); ctx.fillRect(x0 + 8, y0 + 31, 8, 1);
+  ctx.fillStyle = '#6b6b6b'; ctx.fillRect(x0 + 36, y0 + 4, 5, 10); ctx.fillStyle = '#555'; ctx.fillRect(x0 + 35, y0 + 3, 7, 2);
+}
+function bodyOffset(e) {
+  let ox = 0, oy = 0; if (e.shake > 0) ox = Math.random() < .5 ? -1 : 1;
+  if (e.hop > 0) oy = -Math.sin((1 - e.hop / e.hopMax) * Math.PI) * 8; return [ox, oy];
+}
+function drawBoar() {
+  const [ox, oy] = bodyOffset(boar); if (boar.stumble > 0) { /* tumble wobble */ }
+  const sx = Math.round(boar.x - cam.x + ox), sy = Math.round(boar.y - cam.y), f = boar.dir === 'right' ? 1 : -1;
+  const wf = boar.moving ? Math.floor(boar.t * 8) % 2 : 0, bob = boar.moving && wf ? -1 : 0, yy = sy + oy + bob;
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(sx - 7, sy - 1, 14, 3);
+  const body = '#8c5a3a', dk = '#5e3a22', belly = '#b57f56', pink = '#f0a8a8', tusk = '#fff6e0', eye = '#111';
+  const sc = boar.scared, legsDy = boar.stumble > 0 ? 1 : 0;
+  if (boar.dir === 'left' || boar.dir === 'right') {
+    const p = mk(sx, yy, f), hd = boar.digging ? 3 + (Math.floor(time * 8) % 2) : 0;
+    const jit = sc ? (Math.random() < .5 ? 1 : 0) : 0;
+    p(-7, -10, 13, 7, body); p(-7, -10, 13, 2, dk); p(-5, -4, 9, 1, belly);
+    p(4, -10 + hd, 5, 7, body); p(8, -7 + hd, 3, 3, pink); p(10, -6 + hd, 1, 1, '#7a3a3a'); p(6, -9 + hd, 1, 1, eye); p(4, -12 + hd, 2, 2, dk); p(8, -4 + hd, 1, 1, tusk);
+    if (wf) { p(-4, -3, 2, 3 - legsDy, dk); p(3, -3, 2, 3 - legsDy, dk); } else { p(-6, -3, 2, 3, dk); p(1, -3, 2, 3, dk); }
+    if (sc) { p(-9, -16, 1, 6, dk); p(-5, -12, 1, 2, dk); p(-2, -12, 1, 2, dk); p(1, -12, 1, 2, dk); ctx.fillStyle = '#fff'; p(7, -10 + jit, 1, 1, '#fff'); }
+    else { p(-9, -10, 2, 1, dk); p(-10, -9, 1, 2, dk); p(-9, -8, 1, 1, dk); }
+  } else if (boar.dir === 'down') {
+    const p = mk(sx, yy, 1), hd = boar.digging ? 2 : 0;
+    p(-5, -9, 10, 6, body); p(-3, -5, 6, 2, belly);
+    p(-4, -12 + hd, 8, 7, body); p(-5, -13 + hd, 2, 3, dk); p(3, -13 + hd, 2, 3, dk);
+    p(-3, -10 + hd, 1, 1, eye); p(2, -10 + hd, 1, 1, eye); p(-2, -8 + hd, 4, 3, pink); p(-1, -7 + hd, 1, 1, '#7a3a3a'); p(1, -7 + hd, 1, 1, '#7a3a3a'); p(-3, -6 + hd, 1, 2, tusk); p(2, -6 + hd, 1, 2, tusk);
+    p(-4, -3 + (wf ? 0 : 0), 2, 3 - (wf ? 1 : 0), dk); p(2, -3, 2, 3 - (wf ? 0 : 1), dk);
+    if (sc) { p(-3, -15, 1, 2, dk); p(0, -15, 1, 2, dk); p(2, -15, 1, 2, dk); }
+  } else {
+    const p = mk(sx, yy, 1);
+    p(-5, -10, 10, 7, '#6d4428'); p(-4, -12, 8, 3, body); p(-5, -12, 2, 3, dk); p(3, -12, 2, 3, dk);
+    if (sc) p(0, -18, 1, 7, dk); else { p(-1, -8, 2, 2, dk); p(0, -9, 1, 1, dk); }
+    p(-4, -3, 2, 3 - (wf ? 1 : 0), dk); p(2, -3, 2, 3 - (wf ? 0 : 1), dk);
+  }
+  drawEmote(boar, sx, sy + oy - 22);
+}
+function drawPuki() {
+  if (!puki.visible) return;
+  const [ox, oy] = bodyOffset(puki), sx = Math.round(puki.x - cam.x + ox), sy = Math.round(puki.y - cam.y), f = puki.dir === 'right' ? 1 : -1;
+  const wf = puki.moving ? Math.floor(puki.t * 8) % 2 : 0, yy = sy + oy + (puki.moving && wf ? -1 : 0);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(sx - 6, sy - 1, 12, 3);
+  const gray = '#8a95a3', head = '#6b7683', white = '#f4f6f8', blue = '#3a6fd8', dblue = '#2a50a8', pinkc = '#f58fb0';
+  if (puki.dir === 'left' || puki.dir === 'right') {
+    const p = mk(sx, yy, f);
+    p(-8, -10, 4, 7, blue); p(-5, -9, 1, 5, dblue); p(-8, -13, 1, 3, '#cfd6dd'); p(-7, -12, 3, 1, '#cfd6dd');
+    p(-4, -10, 9, 9, gray); p(0, -8, 4, 7, white); p(-2, -14, 7, 5, head); p(2, -13, 3, 3, white); p(3, -12, 1, 1, '#111'); p(5, -11, 2, 1, ORANGE);
+    if (puki.blush) p(2, -11, 2, 1, pinkc);
+    p(-3, wf ? -1 : 0, 2, 1, ORANGE); p(1, wf ? 0 : -1, 2, 1, ORANGE);
+  } else if (puki.dir === 'down') {
+    const p = mk(sx, yy, 1);
+    p(-4, -10, 8, 9, gray); p(-3, -8, 6, 7, white); p(-4, -14, 8, 5, head); p(-3, -13, 6, 3, white); p(-2, -12, 1, 1, '#111'); p(1, -12, 1, 1, '#111'); p(-1, -11, 2, 1, ORANGE);
+    p(-5, -9, 1, 5, blue); p(4, -9, 1, 5, blue); if (puki.blush) { p(-3, -11, 1, 1, pinkc); p(2, -11, 1, 1, pinkc); }
+    p(-3, wf ? -1 : 0, 2, 1, ORANGE); p(1, wf ? 0 : -1, 2, 1, ORANGE);
+  } else {
+    const p = mk(sx, yy, 1);
+    p(-4, -10, 8, 9, gray); p(-4, -14, 8, 5, head); p(-5, -11, 10, 8, blue); p(-3, -7, 6, 3, dblue); p(3, -14, 1, 4, '#cfd6dd');
+    p(-3, wf ? -1 : 0, 2, 1, ORANGE); p(1, wf ? 0 : -1, 2, 1, ORANGE);
+  }
+  if (puki.bulb) { const fl = Math.sin(time * 9) > .92 ? 0 : 1, by = yy - 24 + Math.round(Math.sin(time * 3)); ctx.fillStyle = '#9a9a9a'; ctx.fillRect(sx - 1, by + 4, 3, 2);
+    ctx.fillStyle = fl ? '#ffe66b' : '#d8c870'; ctx.fillRect(sx - 2, by, 5, 4); ctx.fillRect(sx - 1, by - 1, 3, 1); ctx.fillStyle = '#fff'; ctx.fillRect(sx - 1, by + 1, 1, 1); }
+  else drawEmote(puki, sx, yy - 20);
+}
+function drawNPC(n) {
+  const sx = Math.round(n.x - cam.x), sy = Math.round(n.y - cam.y), f = n.f;
+  const idle = Math.sin(time * 2 + n.seed * 3) > .93 ? -1 : 0, p = mk(sx, sy + idle, f);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(sx - 7, sy - 1, 14, 3);
+  if (n.kind === 'hedgehog') {
+    p(-6, -8, 11, 7, '#6a4630');
+    for (let i = 0; i < 6; i++) { p(-7 + i * 2, -11 + (i % 2), 1, 3, '#3d2818'); p(-6 + i * 2, -10, 1, 2, '#8a6a4a'); }
+    p(4, -7, 5, 5, '#e0bf98'); p(8, -6, 2, 2, '#222'); p(6, -6, 1, 1, '#222'); p(4, -9, 2, 2, '#e0bf98'); p(1, -5, 3, 4, '#fff');
+    p(-4, -1, 2, 1, '#e0bf98'); p(2, -1, 2, 1, '#e0bf98');
+  } else if (n.kind === 'owl') {
+    p(-7, -10, 2, 7, '#6e5436'); p(5, -10, 2, 7, '#6e5436');
+    p(-5, -15, 10, 14, '#8b6b47'); p(-3, -9, 6, 7, '#d9c79c');
+    p(-4, -13, 4, 4, '#fff'); p(0, -13, 4, 4, '#fff'); p(-3, -12, 2, 2, '#111'); p(1, -12, 2, 2, '#111'); p(-1, -10, 2, 2, '#e8a020');
+    p(-4, -14, 4, 1, '#e8e8e8'); p(0, -14, 4, 1, '#e8e8e8'); p(-5, -17, 2, 3, '#6e5436'); p(3, -17, 2, 3, '#6e5436');
+    p(-3, -1, 2, 1, '#e8a020'); p(1, -1, 2, 1, '#e8a020');
+  } else {
+    p(-11, -9, 5, 4, '#e0702a'); p(-12, -9, 2, 4, '#fff');
+    p(-6, -8, 11, 5, '#e0702a'); p(-3, -5, 6, 2, '#f4c9a0');
+    p(3, -10, 5, 5, '#e0702a'); p(7, -8, 3, 2, '#e0702a'); p(9, -8, 1, 1, '#111'); p(6, -9, 1, 1, '#111'); p(5, -7, 3, 1, '#fff');
+    p(3, -13, 2, 3, '#e0702a'); p(6, -13, 2, 3, '#e0702a'); p(3, -13, 2, 1, '#4a2a1a'); p(6, -13, 2, 1, '#4a2a1a');
+    p(-5, -3, 2, 3, '#4a2a1a'); p(1, -3, 2, 3, '#4a2a1a');
+  }
+  if (target && target.o === n) drawKey(sx, sy - (n.kind === 'owl' ? 22 : 17), target.label);
+}
+function drawEmote(e, x, y) {
+  if (!e.emote) return; const t = e.emote.txt, w = t.length * 5 + 5;
+  ctx.fillStyle = '#fff'; ctx.fillRect(x - (w >> 1), y - 4, w, 9); ctx.fillRect(x - 1, y + 5, 3, 2); ctx.fillStyle = '#14102a';
+  ctx.font = '8px monospace'; ctx.textAlign = 'center'; ctx.fillText(t, x, y + 3);
+}
+function drawKey(x, y, label) {
+  const w = label.length * 4 + 14; ctx.fillStyle = '#14102aee'; ctx.fillRect(x - (w >> 1), y - 8, w, 10);
+  ctx.fillStyle = '#ffe66b'; ctx.fillRect(x - (w >> 1) + 2, y - 6, 6, 6); ctx.fillStyle = '#14102a'; ctx.font = '7px monospace'; ctx.textAlign = 'left'; ctx.fillText('E', x - (w >> 1) + 3, y - 1);
+  ctx.fillStyle = '#fff'; ctx.fillText(label, x - (w >> 1) + 10, y - 1);
+}
+function drawLights() {
+  const L = [];
+  lights.forEach(l => { const a = Math.min(1, l.t / .15, (l.dur - l.t) / .3); L.push({ x: l.x, y: l.y, r: l.r * (.7 + .3 * a), a }); });
+  if (puki.bulb && puki.visible) L.push({ x: puki.x, y: puki.y - 22, r: 70 + Math.sin(time * 5) * 2, a: 1 });
+  if (dark > .15) L.push({ x: FEAT.hut.tx * T + 12, y: FEAT.hut.ty * T + 32, r: 34, a: .9 }, { x: doorX, y: doorY - 6, r: 22, a: .7 });
+  if (dusk > 0) { ctx.fillStyle = `rgba(255,120,40,${.17 * dusk * (1 - dark * .6)})`; ctx.fillRect(0, 0, W, H); }
+  if (dark > .01) {
+    lctx.globalCompositeOperation = 'source-over'; lctx.clearRect(0, 0, W, H); lctx.fillStyle = `rgba(8,6,36,${.86 * dark})`; lctx.fillRect(0, 0, W, H);
+    lctx.globalCompositeOperation = 'destination-out';
+    L.forEach(l => { for (let i = 0; i < 6; i++) { lctx.fillStyle = `rgba(0,0,0,${.3 * l.a})`; lctx.beginPath(); lctx.arc(Math.round(l.x - cam.x), Math.round(l.y - cam.y), l.r * (1 - i * .15), 0, 7); lctx.fill(); } });
+    ctx.drawImage(lcv, 0, 0);
+  }
+  lights.forEach(l => { const a = Math.min(1, l.t / .15, (l.dur - l.t) / .3), x = Math.round(l.x - cam.x), y = Math.round(l.y - cam.y);
+    ctx.fillStyle = `rgba(255,250,200,${.9 * a})`; ctx.fillRect(x - 1, y - 5, 3, 11); ctx.fillRect(x - 5, y - 1, 11, 3); ctx.fillRect(x - 2, y - 2, 5, 5); });
+}
+function draw() {
+  const cx = Math.round(cam.x), cy = Math.round(cam.y); cam.rx = cx; cam.ry = cy;
+  ctx.fillStyle = '#2f5d2f'; ctx.fillRect(0, 0, W, H);
+  const tx0 = Math.floor(cx / T), ty0 = Math.floor(cy / T);
+  for (let ty = ty0; ty <= ty0 + H / T + 1; ty++) for (let tx = tx0; tx <= tx0 + W / T + 1; tx++) if (inMap(tx, ty)) drawTile(tx, ty, tx * T - cx, ty * T - cy);
+  // buried item glints (only after sniffing)
+  if (sniffHint) { const b = sniffHint.b, a = Math.sin(time * 10) > 0; ctx.fillStyle = a ? '#fff' : '#ffe66b'; ctx.fillRect(Math.round(b.x - cx), Math.round(b.y - cy - 2), 1, 3); ctx.fillRect(Math.round(b.x - cx) - 1, Math.round(b.y - cy - 1), 3, 1); }
+  const list = [];
+  trees.forEach(t => { const bx = t.tx * T - cx, by = t.ty * T - cy; if (bx > -30 && bx < W + 30 && by > -20 && by < H + 50) list.push({ y: t.ty * T + 14, d: () => drawTree(t, cx, cy, 0) }); });
+  objs.forEach(o => {
+    if (o.x - cx < -30 || o.x - cx > W + 30 || o.y - cy < -30 || o.y - cy > H + 50) return;
+    if (o.type === 'apple') list.push({ y: o.y, d: () => { drawTree({ tx: (o.x - 8) / T, ty: (o.y - 14) / T, v: 2 }, cx, cy, 2 - (S.apples[o.id] || 0)); if (target && target.o === o) drawKey(o.x - cx, o.y - cy - 32, target.label); } });
+    else if (o.type === 'berry') list.push({ y: o.y, d: () => { drawBush(o, cx, cy); if (target && target.o === o) drawKey(o.x - cx, o.y - cy - 14, target.label); } });
+    else if (o.type === 'rock') list.push({ y: o.y, d: () => drawRock(o, cx, cy) });
+    else if (o.type === 'sign') list.push({ y: o.y, d: () => { drawSign(o, cx, cy); if (target && target.o === o) drawKey(o.x - cx, o.y - cy - 20, target.label); } });
+  });
+  list.push({ y: (FEAT.hut.ty + 3) * T, d: () => { drawHut(cx, cy); if (target && target.k === 'door') drawKey(doorX - cx, doorY - cy - 22, target.label); } });
+  npcs.forEach(n => list.push({ y: n.y, d: () => drawNPC(n) }));
+  list.push({ y: boar.y, d: drawBoar }); if (puki.visible) list.push({ y: puki.y, d: drawPuki });
+  list.sort((a, b) => a.y - b.y).forEach(i => i.d());
+  if (target && ['puki', 'dig', 'bridge'].includes(target.k)) drawKey(target.x - cx, target.y - cy - (target.k === 'puki' ? 22 : 12), target.label);
+  particles.forEach(p => { ctx.globalAlpha = Math.min(1, p.life * 3); ctx.fillStyle = p.c; ctx.fillRect(Math.round(p.x - cx), Math.round(p.y - cy), p.s, p.s); }); ctx.globalAlpha = 1;
+  effects.forEach(e => e.draw());
+  if (sniffHint) { const b = sniffHint.b, a = Math.atan2(b.y - boar.y, b.x - boar.x), d = Math.hypot(b.x - boar.x, b.y - boar.y), warm = 1 - d / sniffHint.rad;
+    for (let k = 0; k < 5; k++) { ctx.fillStyle = `rgba(255,${Math.round(255 - warm * 120)},${Math.round(200 - warm * 150)},${.4 + k * .12})`; const s = 1 + (k > 2 ? 1 : 0);
+      ctx.fillRect(Math.round(boar.x - cx + Math.cos(a) * (12 + k * 3)), Math.round(boar.y - cy - 6 + Math.sin(a) * (12 + k * 3)), s, s); } }
+  drawLights();
+}
+
+/* ---------- main loop ---------- */
+let last = 0;
+function frame(ts) {
+  const dt = Math.min(.05, (ts - last) / 1000 || 0); last = ts;
+  update(dt); draw(); requestAnimationFrame(frame);
+}
+applyBridge(); buildTitle(); renderHud();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
