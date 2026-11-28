@@ -40,6 +40,10 @@
     padding:calc(var(--u)*2.5) calc(var(--u)*6);cursor:pointer}
   #title button:hover,#title button:focus{background:#ffe66b;outline:none}
   #title p{font-size:calc(var(--u)*2);line-height:2;color:#cfc8e8;margin-top:calc(var(--u)*7)}
+  .bubble{position:absolute;transform:translate(-50%,-100%);white-space:nowrap;pointer-events:none;background:#14102af0;
+    border:calc(var(--u)*.5) solid #f4e7b0;padding:calc(var(--u)*.9) calc(var(--u)*1.6);font-size:max(8px,calc(var(--u)*2.4));line-height:1}
+  .bubble .k{display:inline-block;background:#ffe66b;color:#14102a;padding:calc(var(--u)*.6) calc(var(--u)*1);margin-right:calc(var(--u)*1.2)}
+  .bubble.em{background:#fff;color:#14102a;border-color:#14102a;font-size:max(8px,calc(var(--u)*2.8))}
   #fade{position:absolute;inset:0;background:#000;opacity:0;transition:opacity .6s;pointer-events:none}
 </style>
 </head>
@@ -48,6 +52,8 @@
   <canvas id="c"></canvas>
   <div id="hud"></div>
   <div id="toast"></div>
+  <div id="tip" class="bubble hidden"><span class="k">E</span><span id="tipl"></span></div>
+  <div id="emB" class="bubble em hidden"></div><div id="emP" class="bubble em hidden"></div>
   <div id="dlg" class="hidden">
     <div id="dname"></div><div id="dtext"></div><div id="dchoices"></div>
     <input id="dinput" class="hidden" maxlength="80" autocomplete="off" spellcheck="false">
@@ -57,7 +63,7 @@
   <div id="title">
     <h1>Little Boar<br>&amp; Puki</h1>
     <div id="tbtns"></div>
-    <p>Arrows / WASD: move &nbsp; E: talk &amp; use<br>F: sniff &nbsp; Tab: journal &nbsp; M: sound</p>
+    <p>Arrows / WASD: move &nbsp; E: talk &amp; use &nbsp; Q: dig<br>F: sniff &nbsp; Tab: journal &nbsp; M: sound</p>
   </div>
   <div id="fade"></div>
 </div></div>
@@ -83,9 +89,10 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const pick = a => a[Math.floor(Math.random() * a.length)];
 
+let SC = 3;
 function resize() {
   const s = Math.max(1, Math.floor(Math.min(innerWidth / W, innerHeight / H)));
-  const g = $('game'); g.style.width = W * s + 'px'; g.style.height = H * s + 'px'; g.style.setProperty('--u', s + 'px');
+  SC = s; const g = $('game'); g.style.width = W * s + 'px'; g.style.height = H * s + 'px'; g.style.setProperty('--u', s + 'px');
 }
 addEventListener('resize', resize); resize();
 
@@ -397,7 +404,7 @@ async function talk(n) {
 function hintFor(n) {
   if (n.id === 'bramble') return S.q.bramble === 0 ? 'ask Bramble if he needs help' : S.q.bramble === 1 ? 'apple trees grow around the big clearing and each gives two apples' : 'enjoy the pie smell';
   if (n.id === 'olwin') return S.q.olwin === 1 ? 'think about the riddle, the answer is something ordinary you meet every day' : 'be curious';
-  return S.q.rusty === 1 ? 'press F to sniff near the old mossy rock in the south-west and dig where the nose says' : S.q.rusty === 2 ? 'come back and tell Rusty' : 'have fun';
+  return S.q.rusty === 1 ? 'press F to sniff near the old mossy rock in the south-west, then press Q to dig where the nose says' : S.q.rusty === 2 ? 'come back and tell Rusty' : 'have fun';
 }
 async function riddle(n) {
   const r = RIDDLES[riddleIdx++ % RIDDLES.length];
@@ -447,9 +454,11 @@ async function gearsMoment() {
 /* ---------- player actions ---------- */
 function nearest() {
   let best = null, bd = 1e9;
-  const c = (k, o, x, y, r, label) => { const d = Math.hypot(boar.x - x, boar.y - y); if (d < r && d < bd) { bd = d; best = { k, o, x, y, label }; } };
+  const c = (k, o, x, y, r, label, bias = 0) => { const d = Math.hypot(boar.x - x, boar.y - y); if (d < r && d + bias < bd) { bd = d + bias; best = { k, o, x, y, label }; } };
+  // a spot you have sniffed out always comes first
+  buried.forEach(b => { if (b.smelled && !S.found[b.id] && (b.kind !== 'stash' || S.q.rusty >= 1)) c('dig2', b, b.x, b.y, 18, 'Dig', -100); });
   npcs.forEach(n => c('npc', n, n.x, n.y, 26, 'Talk'));
-  if (puki.visible) c('puki', puki, puki.x, puki.y, 22, 'Puki');
+  if (puki.visible) c('puki', puki, puki.x, puki.y, 22, 'Puki', 14);   // Puki never wins a tie
   c('door', null, doorX, doorY, 24, 'Sleep');
   objs.forEach(o => {
     if (o.type === 'apple' && (S.apples[o.id] || 0) < 2) c('apple', o, o.x, o.y, 24, 'Pick apple');
@@ -466,11 +475,16 @@ async function interact() {
   if (t.k === 'npc') return talk(t.o);
   if (t.k === 'puki') return talkPuki();
   if (t.k === 'dig') return digSpot();
+  if (t.k === 'dig2') return tryDig();
   if (t.k === 'door') return sleepHome();
   if (t.k === 'apple') { S.apples[t.o.id] = (S.apples[t.o.id] || 0) + 1; S.items.apples++; sfx.pick(); burst(t.o.x, t.o.y - 16, 6, ['#d33', '#f66'], 30); toast('🍎 Apple!'); return; }
   if (t.k === 'berry') { S.berries[t.o.id] = (S.berries[t.o.id] || 0) + 1; S.items.berries++; sfx.pick(); burst(boar.x, boar.y - 6, 5, ['#3a4fd0', '#6a7ff0'], 25); emote(boar, '♥', 700); toast('🫐 Yum!'); return; }
   if (t.k === 'sign') { mode = 'dialog'; await say('', 'MOUNTAINS  →  coming soon!\n(The forest ends here for now. Thank you for playing chapter 1!)'); mode = 'play'; return; }
   if (t.k === 'bridge') return bridge();
+}
+function digHere() {            // Q: dig right here, no matter who is standing next to you
+  if (busy || mode !== 'play') return;
+  const t = nearest(); return t && t.k === 'dig' ? digSpot() : tryDig();
 }
 async function talkPuki() {
   mode = 'dialog'; faceTo(boar, puki); faceTo(puki, boar);
@@ -501,7 +515,7 @@ async function tryDig() {
   busy = true; mode = 'cutscene'; boar.digging = true;
   for (let i = 0; i < 4; i++) { sfx.dig(); burst(boar.x + (boar.dir === 'left' ? -6 : 6), boar.y - 2, 3, ['#4a7a3a', '#7c5533'], 28); await wait(230); }
   boar.digging = false;
-  const b = buried.find(b => !S.found[b.id] && Math.hypot(b.x - boar.x, b.y - boar.y) < 15 && (b.kind !== 'stash' || S.q.rusty >= 1));
+  const b = buried.find(b => !S.found[b.id] && Math.hypot(b.x - boar.x, b.y - boar.y) < 18 && (b.kind !== 'stash' || S.q.rusty >= 1));
   if (b) {
     S.found[b.id] = true; sniffHint = null; sfx.ding(); burst(b.x, b.y - 4, 14, ['#ffe66b', '#fff', '#f4a'], 50, .9); hop(boar);
     if (b.kind === 'truffle') {
@@ -521,7 +535,7 @@ function sniff() {
   emote(boar, '~', 900);
   let best = null, bd = rad;
   buried.forEach(b => { if (S.found[b.id] || (b.kind === 'stash' && S.q.rusty < 1)) return; const d = Math.hypot(b.x - boar.x, b.y - boar.y); if (d < bd) { bd = d; best = b; } });
-  if (best) { sniffHint = { b: best, t: 4.5, rad }; toast('You smell something buried nearby!  (stand on it, press E)', 3000); }
+  if (best) { best.smelled = true; sniffHint = { b: best, t: 8, rad }; toast('You smell something buried nearby! Stand on it and press Q (or E) to dig.', 3600); }
   else toast('Sniff sniff... nothing buried nearby.', 1800);
 }
 async function bridge() {
@@ -603,7 +617,7 @@ async function endIntro() {
   await wait(600);
   await say('', 'The next morning... the forest is bright, and full of smells.');
   await fadeIn(); mode = 'play'; save();
-  toast('Explore, dig, sniff (F) and meet your neighbours. Tab = journal.', 5000);
+  toast('Explore, dig (Q), sniff (F) and meet your neighbours. Tab = journal.', 5000);
 }
 function continueGame() {
   const d = loadSave(); if (!d) return newGame();
@@ -670,7 +684,7 @@ addEventListener('keydown', e => {
   if (k === 'tab' && mode === 'play') return toggleJournal();
   if (k === 'escape' && journalOpen) return toggleJournal();
   if (journalOpen) return;
-  if (mode === 'play') { if (act) interact(); else if (k === 'f') sniff(); }
+  if (mode === 'play') { if (act) interact(); else if (k === 'f') sniff(); else if (k === 'q') digHere(); }
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -908,15 +922,18 @@ function drawNPC(n) {
   }
   if (target && target.o === n) drawKey(sx, sy - (n.kind === 'owl' ? 22 : 17), target.label);
 }
-function drawEmote(e, x, y) {
-  if (!e.emote) return; const t = e.emote.txt, w = t.length * 5 + 5;
-  ctx.fillStyle = '#fff'; ctx.fillRect(x - (w >> 1), y - 4, w, 9); ctx.fillRect(x - 1, y + 5, 3, 2); ctx.fillStyle = '#14102a';
-  ctx.font = '8px monospace'; ctx.textAlign = 'center'; ctx.fillText(t, x, y + 3);
-}
-function drawKey(x, y, label) {
-  const w = label.length * 4 + 14; ctx.fillStyle = '#14102aee'; ctx.fillRect(x - (w >> 1), y - 8, w, 10);
-  ctx.fillStyle = '#ffe66b'; ctx.fillRect(x - (w >> 1) + 2, y - 6, 6, 6); ctx.fillStyle = '#14102a'; ctx.font = '7px monospace'; ctx.textAlign = 'left'; ctx.fillText('E', x - (w >> 1) + 3, y - 1);
-  ctx.fillStyle = '#fff'; ctx.fillText(label, x - (w >> 1) + 10, y - 1);
+let tipPos = null, emPos = {};
+function drawEmote(e, x, y) { if (e.emote) emPos[e === boar ? 'b' : 'p'] = { x, y: y + 5, txt: e.emote.txt }; }
+function drawKey(x, y, label) { tipPos = { x, y: y + 2, label }; }
+function placeOverlays() {
+  const put = (el, p, set) => {
+    if (!p) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden'); set(el, p);
+    el.style.left = Math.round(p.x * SC) + 'px'; el.style.top = Math.round(p.y * SC) + 'px';
+  };
+  put($('tip'), tipPos, (el, p) => { if (el._t !== p.label) { el._t = p.label; $('tipl').textContent = p.label; } });
+  put($('emB'), emPos.b, (el, p) => { if (el._t !== p.txt) { el._t = p.txt; el.textContent = p.txt; } });
+  put($('emP'), emPos.p, (el, p) => { if (el._t !== p.txt) { el._t = p.txt; el.textContent = p.txt; } });
 }
 function drawLights() {
   const L = [];
@@ -934,7 +951,7 @@ function drawLights() {
     ctx.fillStyle = `rgba(255,250,200,${.9 * a})`; ctx.fillRect(x - 1, y - 5, 3, 11); ctx.fillRect(x - 5, y - 1, 11, 3); ctx.fillRect(x - 2, y - 2, 5, 5); });
 }
 function draw() {
-  const cx = Math.round(cam.x), cy = Math.round(cam.y); cam.rx = cx; cam.ry = cy;
+  const cx = Math.round(cam.x), cy = Math.round(cam.y); tipPos = null; emPos = {};
   ctx.fillStyle = '#2f5d2f'; ctx.fillRect(0, 0, W, H);
   const tx0 = Math.floor(cx / T), ty0 = Math.floor(cy / T);
   for (let ty = ty0; ty <= ty0 + H / T + 1; ty++) for (let tx = tx0; tx <= tx0 + W / T + 1; tx++) if (inMap(tx, ty)) drawTile(tx, ty, tx * T - cx, ty * T - cy);
@@ -953,13 +970,13 @@ function draw() {
   npcs.forEach(n => list.push({ y: n.y, d: () => drawNPC(n) }));
   list.push({ y: boar.y, d: drawBoar }); if (puki.visible) list.push({ y: puki.y, d: drawPuki });
   list.sort((a, b) => a.y - b.y).forEach(i => i.d());
-  if (target && ['puki', 'dig', 'bridge'].includes(target.k)) drawKey(target.x - cx, target.y - cy - (target.k === 'puki' ? 22 : 12), target.label);
+  if (target && ['puki', 'dig', 'dig2', 'bridge'].includes(target.k)) drawKey(target.x - cx, target.y - cy - (target.k === 'puki' ? 22 : 12), target.label);
   particles.forEach(p => { ctx.globalAlpha = Math.min(1, p.life * 3); ctx.fillStyle = p.c; ctx.fillRect(Math.round(p.x - cx), Math.round(p.y - cy), p.s, p.s); }); ctx.globalAlpha = 1;
   effects.forEach(e => e.draw());
   if (sniffHint) { const b = sniffHint.b, a = Math.atan2(b.y - boar.y, b.x - boar.x), d = Math.hypot(b.x - boar.x, b.y - boar.y), warm = 1 - d / sniffHint.rad;
     for (let k = 0; k < 5; k++) { ctx.fillStyle = `rgba(255,${Math.round(255 - warm * 120)},${Math.round(200 - warm * 150)},${.4 + k * .12})`; const s = 1 + (k > 2 ? 1 : 0);
       ctx.fillRect(Math.round(boar.x - cx + Math.cos(a) * (12 + k * 3)), Math.round(boar.y - cy - 6 + Math.sin(a) * (12 + k * 3)), s, s); } }
-  drawLights();
+  drawLights(); placeOverlays();
 }
 
 /* ---------- main loop ---------- */
